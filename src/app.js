@@ -1,10 +1,12 @@
 import express from 'express'
+import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import helmet from 'helmet'
 import hpp from 'hpp'
 import compression from 'compression'
 import morgan from 'morgan'
 import rateLimit from 'express-rate-limit'
+import authRoutes from './routes/authRoutes.js'
 
 // Config
 const app = express()
@@ -26,9 +28,10 @@ app.use(cors({
   credentials: true,
 }))
 
-// Body Parser
+// Body Parser & Cookies
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ limit: '10mb', extended: true }))
+app.use(cookieParser())
 
 // Compression
 app.use(compression())
@@ -46,7 +49,7 @@ app.get('/api/health', (req, res) => {
 })
 
 // Routes will be added here
-// app.use('/api/auth', authRoutes)
+app.use('/api/auth', authRoutes)
 // app.use('/api/properties', propertyRoutes)
 // app.use('/api/leads', leadRoutes)
 // app.use('/api/admin', adminRoutes)
