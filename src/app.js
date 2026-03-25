@@ -8,6 +8,7 @@ import morgan from 'morgan'
 import rateLimit from 'express-rate-limit'
 import authRoutes from './routes/authRoutes.js'
 import propertyRoutes from './routes/propertyRoutes.js'
+import leadRoutes from './routes/leadRoutes.js'
 
 // Config
 const app = express()
@@ -52,7 +53,7 @@ app.get('/api/health', (req, res) => {
 // Routes will be added here
 app.use('/api/auth', authRoutes)
 app.use('/api/properties', propertyRoutes)
-// app.use('/api/leads', leadRoutes)
+app.use('/api/leads', leadRoutes)
 // app.use('/api/admin', adminRoutes)
 
 // 404 Handler
