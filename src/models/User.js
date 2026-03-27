@@ -35,7 +35,10 @@ const userSchema = new mongoose.Schema(
       enum: ['buyer', 'agent', 'admin'],
       default: 'buyer',
     },
-    avatar: String,
+    avatar: {
+      url: String,
+      publicId: String,                 // Cloudinary public ID for deletion/updates
+    },
     bio: String,
     verified: {
       type: Boolean,

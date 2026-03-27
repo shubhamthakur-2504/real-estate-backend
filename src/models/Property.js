@@ -71,12 +71,19 @@ const propertySchema = new mongoose.Schema(
     distanceToHospital: Number,         // in km
     distanceToSchool: Number,           // in km
     distanceToMetro: Number,            // in km (for metro cities like Delhi, Mumbai)
+    // Property images with Cloudinary integration
     images: [
       {
         url: String,
+        publicId: String,               // Cloudinary public ID for deletion
         order: Number,
       },
     ],
+    // Featured image (main property image)
+    featuredImage: {
+      url: String,
+      publicId: String,                 // Cloudinary public ID for deletion
+    },
     status: {
       type: String,
       enum: ['active', 'inactive', 'sold'],
