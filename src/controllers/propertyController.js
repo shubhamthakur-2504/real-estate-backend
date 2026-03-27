@@ -1,6 +1,7 @@
 import Property from '../models/Property.js'
 import { asyncHandler, AppError, sendSuccessResponse } from '../utils/errorHandler.js'
 import { geocodeAddress } from '../utils/geocoding.js'
+import { safeDeleteImage, safeReplaceImage, safeBatchDeleteImages } from '../utils/imageCleanup.js'
 
 // Create property
 export const createProperty = asyncHandler(async (req, res) => {
@@ -218,7 +219,33 @@ export const deleteProperty = asyncHandler(async (req, res) => {
     throw new AppError('You are not authorized to delete this property', 403)
   }
 
+  // Collect all image public IDs for cleanup
+  const imagesToDelete = []
+  
+  // Add featured image
+  if (property.featuredImage?.publicId) {
+    imagesToDelete.push(property.featuredImage.publicId)
+  }
+  
+  // Add all gallery images
+  if (Array.isArray(property.images)) {
+    property.images.forEach((img) => {
+      if (img.publicId) {
+        imagesToDelete.push(img.publicId)
+      }
+    })
+  }
+
+  // Delete property from database
   await Property.findByIdAndDelete(id)
+
+  // Delete all associated images from Cloudinary asynchronously (non-blocking)
+  if (imagesToDelete.length > 0) {
+    safeBatchDeleteImages(
+      imagesToDelete.map((publicId) => ({ publicId })),
+      'deleteProperty'
+    ).catch((err) => console.error('Background batch image deletion error:', err))
+  }
 
   sendSuccessResponse(
     res,
@@ -542,4 +569,134 @@ export const searchByDistance = asyncHandler(async (req, res) => {
     },
     `Properties retrieved sorted by ${distanceField}`
   )
+})
+
+// Add image to property (after upload to Cloudinary)
+export const addPropertyImage = asyncHandler(async (req, res) => {
+  const { propertyId } = req.params
+  const { url, publicId, order } = req.body
+
+  if (!url || !publicId) {
+    throw new AppError('Please provide image url and publicId', 400)
+  }
+
+  const property = await Property.findById(propertyId)
+  if (!property) {
+    throw new AppError('Property not found', 404)
+  }
+
+  // Check authorization
+  if (property.owner.toString() !== req.user.id && req.user.role !== 'admin') {
+    throw new AppError('You are not authorized to update this property', 403)
+  }
+
+  // Add image to array
+  property.images.push({
+    url,
+    publicId,
+    order: order || property.images.length + 1,
+  })
+
+  await property.save()
+
+  sendSuccessResponse(res, property, 'Image added to property successfully')
+})
+
+// Set featured image for property
+export const setFeaturedImage = asyncHandler(async (req, res) => {
+  const { propertyId } = req.params
+  const { url, publicId } = req.body
+
+  if (!url || !publicId) {
+    throw new AppError('Please provide image url and publicId', 400)
+  }
+
+  const property = await Property.findById(propertyId)
+  if (!property) {
+    throw new AppError('Property not found', 404)
+  }
+
+  // Check authorization
+  if (property.owner.toString() !== req.user.id && req.user.role !== 'admin') {
+    throw new AppError('You are not authorized to update this property', 403)
+  }
+
+  // Get old featured image public ID for deletion (non-blocking)
+  const oldFeaturedImagePublicId = property.featuredImage?.publicId
+
+  // Update property with new featured image
+  property.featuredImage = {
+    url,
+    publicId,
+  }
+
+  await property.save()
+
+  // Delete old featured image asynchronously (non-blocking)
+  if (oldFeaturedImagePublicId) {
+    safeDeleteImage(oldFeaturedImagePublicId, 'setFeaturedImage').catch((err) =>
+      console.error('Background featured image deletion error:', err)
+    )
+  }
+
+  sendSuccessResponse(res, property, 'Featured image set successfully')
+})
+
+// Reorder property images
+export const reorderPropertyImages = asyncHandler(async (req, res) => {
+  const { propertyId } = req.params
+  const { images } = req.body
+
+  if (!Array.isArray(images) || images.length === 0) {
+    throw new AppError('Please provide images array with order', 400)
+  }
+
+  const property = await Property.findById(propertyId)
+  if (!property) {
+    throw new AppError('Property not found', 404)
+  }
+
+  // Check authorization
+  if (property.owner.toString() !== req.user.id && req.user.role !== 'admin') {
+    throw new AppError('You are not authorized to update this property', 403)
+  }
+
+  // Update order
+  property.images = images
+
+  await property.save()
+
+  sendSuccessResponse(res, property, 'Images reordered successfully')
+})
+
+// Remove image from property
+export const removePropertyImage = asyncHandler(async (req, res) => {
+  const { propertyId } = req.params
+  const { publicId } = req.body
+
+  if (!publicId) {
+    throw new AppError('Please provide publicId', 400)
+  }
+
+  const property = await Property.findById(propertyId)
+  if (!property) {
+    throw new AppError('Property not found', 404)
+  }
+
+  // Check authorization
+  if (property.owner.toString() !== req.user.id && req.user.role !== 'admin') {
+    throw new AppError('You are not authorized to update this property', 403)
+  }
+
+  // Step 1: Remove image from database array
+  property.images = property.images.filter((img) => img.publicId !== publicId)
+  await property.save()
+
+  // Step 2: Delete from Cloudinary asynchronously (non-blocking)
+  // If deletion fails, the DB is already updated, preventing orphaned images
+  safeDeleteImage(publicId, 'removePropertyImage').catch((err) =>
+    console.error('Background image deletion error:', err)
+  )
+
+  sendSuccessResponse(res, property, 'Image removed from property successfully')
 })
