@@ -15,6 +15,10 @@ import {
   getFeaturedProperties,
   searchByNearbyFacilities,
   searchByDistance,
+  addPropertyImage,
+  setFeaturedImage,
+  reorderPropertyImages,
+  removePropertyImage,
 } from '../controllers/propertyController.js'
 import { authMiddleware } from '../middlewares/authMiddleware.js'
 
@@ -41,6 +45,12 @@ router.delete('/:id', authMiddleware, deleteProperty)
 router.post('/:id/favorite', authMiddleware, addToFavorites)
 router.delete('/:id/favorite', authMiddleware, removeFromFavorites)
 router.post('/:id/feature', authMiddleware, featureProperty)
+
+// Image management routes
+router.post('/:propertyId/images/add', authMiddleware, addPropertyImage)
+router.post('/:propertyId/images/featured', authMiddleware, setFeaturedImage)
+router.put('/:propertyId/images/reorder', authMiddleware, reorderPropertyImages)
+router.delete('/:propertyId/images/remove', authMiddleware, removePropertyImage)
 
 // Agent properties with agentId
 router.get('/agent/:agentId', getAgentProperties)
