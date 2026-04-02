@@ -1,12 +1,27 @@
 import nodemailer from 'nodemailer'
 
-const transporter = nodemailer.createTransport({
-  service: process.env.SMTP_SERVICE || 'gmail',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-})
+const smtpHost = process.env.BREVO_SMTP_HOST || process.env.SMTP_HOST
+const smtpPort = Number(process.env.BREVO_SMTP_PORT || process.env.SMTP_PORT || 587)
+const smtpUser = process.env.BREVO_SMTP_USER || process.env.SMTP_USER
+const smtpPass = process.env.BREVO_SMTP_PASSWORD || process.env.SMTP_PASS
+
+const transporter = smtpHost
+  ? nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    })
+  : nodemailer.createTransport({
+      service: process.env.SMTP_SERVICE || 'gmail',
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    })
 
 export const sendEmail = async (to, subject, html) => {
   try {

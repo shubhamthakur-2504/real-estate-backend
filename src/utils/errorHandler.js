@@ -9,7 +9,29 @@ export class AppError extends Error {
 
 // Error handler wrapper for async functions
 export const asyncHandler = (fn) => (req, res, next) => {
-  Promise.resolve(fn(req, res, next)).catch(next)
+  try {
+    Promise.resolve(fn(req, res, next)).catch((err) => {
+      if (typeof next === 'function') {
+        next(err)
+      } else {
+        console.error('Error handler not available:', err)
+        res.status(err.status || 500).json({
+          success: false,
+          message: err.message || 'Internal Server Error',
+        })
+      }
+    })
+  } catch (err) {
+    if (typeof next === 'function') {
+      next(err)
+    } else {
+      console.error('Error caught:', err)
+      res.status(err.status || 500).json({
+        success: false,
+        message: err.message || 'Internal Server Error',
+      })
+    }
+  }
 }
 
 // Error response formatter
