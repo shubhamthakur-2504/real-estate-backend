@@ -10,6 +10,7 @@ import authRoutes from './routes/authRoutes.js'
 import propertyRoutes from './routes/propertyRoutes.js'
 import leadRoutes from './routes/leadRoutes.js'
 import uploadRoutes from './routes/uploadRoutes.js'
+import wishlistRoutes from './routes/wishlistRoutes.js'
 
 // Config
 const app = express()
@@ -56,6 +57,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/properties', propertyRoutes)
 app.use('/api/leads', leadRoutes)
 app.use('/api/uploads', uploadRoutes)
+app.use('/api/wishlist', wishlistRoutes)
 // app.use('/api/admin', adminRoutes)
 
 // 404 Handler
