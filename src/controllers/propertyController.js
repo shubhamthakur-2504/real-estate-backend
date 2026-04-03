@@ -423,6 +423,34 @@ export const getMyProperties = asyncHandler(async (req, res) => {
   )
 })
 
+// Get properties created by the logged-in user (both agent and admin created properties)
+export const getPropertiesCreatedByMe = asyncHandler(async (req, res) => {
+  const { limit = 100 } = req.query
+
+  if (req.user.role !== 'agent' && req.user.role !== 'admin') {
+    throw new AppError('Only agents and admins can view their properties', 403)
+  }
+
+  // For agents: properties where agent === user.id
+  // For admins: properties where owner === user.id (created by this admin)
+  const filter = req.user.role === 'agent'
+    ? { agent: req.user.id }
+    : { owner: req.user.id }
+
+  const properties = await Property.find(filter)
+    .select('_id title city propertyType price')
+    .sort({ createdAt: -1 })
+    .limit(Number(limit))
+
+  sendSuccessResponse(
+    res,
+    {
+      properties,
+    },
+    'Your created properties retrieved successfully'
+  )
+})
+
 // Feature a property (admin/agent only)
 export const featureProperty = asyncHandler(async (req, res) => {
   const { id } = req.params

@@ -48,15 +48,18 @@ export const register = asyncHandler(async (req, res) => {
   user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000)
   await user.save()
 
-  // Send verification email
-  try {
-    await sendVerificationEmail(email, verificationToken)
-  } catch (error) {
-    // Clear verification token if email fails
-    user.emailVerificationToken = null
-    user.emailVerificationExpires = null
-    await user.save()
-    throw new AppError('Failed to send verification email', 500)
+  // Send verification email (optional - skip if email not configured)
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      await sendVerificationEmail(email, verificationToken)
+    } catch (error) {
+      console.warn('⚠️ Email verification failed, continuing without email:', error.message)
+      // Clear verification token if email fails
+      user.emailVerificationToken = null
+      user.emailVerificationExpires = null
+      await user.save()
+      // Don't throw error - allow registration to continue
+    }
   }
 
   // Generate tokens
@@ -373,4 +376,91 @@ export const resendVerificationEmail = asyncHandler(async (req, res) => {
     await user.save()
     throw new AppError('Failed to send verification email', 500)
   }
+})
+
+// Update user profile (name, phone, bio)
+export const updateProfile = asyncHandler(async (req, res) => {
+  const { firstname, lastname, phone, bio } = req.body
+  const userId = req.user.id
+
+  // Find user
+  const user = await User.findById(userId)
+  if (!user) {
+    throw new AppError('User not found', 404)
+  }
+
+  // Update fields if provided
+  if (firstname) user.firstname = firstname.trim()
+  if (lastname) user.lastname = lastname.trim()
+  if (phone) user.phone = phone.trim()
+  if (bio !== undefined) user.bio = bio ? bio.trim() : ''
+
+  // Save updated user
+  await user.save()
+
+  sendSuccessResponse(
+    res,
+    {
+      id: user._id,
+      firstname: user.firstname,
+      lastname: user.lastname,
+      email: user.email,
+      phone: user.phone,
+      bio: user.bio,
+      avatar: user.avatar,
+      role: user.role,
+      verified: user.verified,
+    },
+    'Profile updated successfully',
+    200
+  )
+})
+
+// Change password
+export const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body
+  const userId = req.user.id
+
+  // Validate input
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    throw new AppError('Please provide current password, new password, and confirm password', 400)
+  }
+
+  // Check if new password and confirm password match
+  if (newPassword !== confirmPassword) {
+    throw new AppError('New password and confirm password do not match', 400)
+  }
+
+  // Check if new password is different from current
+  if (currentPassword === newPassword) {
+    throw new AppError('New password must be different from current password', 400)
+  }
+
+  // Check password length
+  if (newPassword.length < 6) {
+    throw new AppError('Password must be at least 6 characters long', 400)
+  }
+
+  // Find user with password selected
+  const user = await User.findById(userId).select('+password')
+  if (!user) {
+    throw new AppError('User not found', 404)
+  }
+
+  // Verify current password
+  const isPasswordCorrect = await user.comparePassword(currentPassword)
+  if (!isPasswordCorrect) {
+    throw new AppError('Current password is incorrect', 401)
+  }
+
+  // Update password
+  user.password = newPassword
+  await user.save()
+
+  sendSuccessResponse(
+    res,
+    {},
+    'Password changed successfully',
+    200
+  )
 })
