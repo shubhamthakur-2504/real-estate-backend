@@ -6,12 +6,17 @@ import { sendLeadNotification, sendLeadStatusEmail, sendPropertyInquiryConfirmat
 
 // Create a new lead
 export const createLead = asyncHandler(async (req, res) => {
-  const { propertyId, buyerName, buyerEmail, buyerPhone, budget, preferredTimeline, source, interest } = req.body
+  const { propertyId, buyerId, buyerName, buyerEmail, buyerPhone, budget, preferredTimeline, source, interest } = req.body
 
   // Validate required fields
   if (!propertyId || !buyerName || !buyerEmail || !buyerPhone) {
     throw new AppError('Please provide propertyId, buyerName, buyerEmail, and buyerPhone', 400)
   }
+
+  console.log('=== CREATE LEAD DEBUG ===')
+  console.log('Received buyerId:', buyerId)
+  console.log('Authenticated user ID:', req.user?.id)
+  console.log('Authenticated user role:', req.user?.role)
 
   // Check if property exists
   const property = await Property.findById(propertyId)
@@ -19,20 +24,26 @@ export const createLead = asyncHandler(async (req, res) => {
     throw new AppError('Property not found', 404)
   }
 
-  // Check if lead already exists (same buyer + property)
+  // Check if lead already exists (same email + property)
   const existingLead = await Lead.findOne({
-    buyer: req.user.id,
+    buyerEmail: buyerEmail,
     property: propertyId,
   })
 
   if (existingLead) {
-    throw new AppError('You have already created a lead for this property', 400)
+    throw new AppError('A lead with this email already exists for this property', 400)
   }
 
-  // Create lead - will be assigned to property's agent
+  // For authenticated buyers, use their user ID if not explicitly provided
+  const finalBuyerId = buyerId || (req.user?.role === 'buyer' ? req.user.id : null)
+  const finalStatus = finalBuyerId ? 'interested' : 'new'
+  
+  console.log('Final buyerId to save:', finalBuyerId)
+  console.log('Final status:', finalStatus)
+  
   const lead = await Lead.create({
-    buyer: req.user.id,
     property: propertyId,
+    buyer: finalBuyerId, // Set buyer if authenticated buyer or provided
     agent: property.agent, // Auto-assign to property's agent
     buyerName,
     buyerEmail,
@@ -42,10 +53,12 @@ export const createLead = asyncHandler(async (req, res) => {
     source: source || 'property_page',
     interest: interest || 'medium',
     isWarmLead: req.body.isWarmLead || false,
+    status: finalStatus,
   })
+  
+  console.log('Lead created - ID:', lead._id, 'Buyer:', lead.buyer, 'Status:', lead.status)
 
   // Populate references
-  await lead.populate('buyer', 'firstname lastname email phone')
   await lead.populate('property', 'title address city price type')
   await lead.populate('agent', 'firstname lastname email phone')
 
@@ -93,7 +106,6 @@ export const getLead = asyncHandler(async (req, res) => {
   const { id } = req.params
 
   const lead = await Lead.findById(id)
-    .populate('buyer', 'firstname lastname email phone avatar')
     .populate('property', 'title address city price bedrooms bathrooms')
     .populate('agent', 'firstname lastname email phone avatar')
     .populate('notes.agentId', 'firstname lastname')
@@ -112,6 +124,12 @@ export const getAllLeads = asyncHandler(async (req, res) => {
   const skip = (page - 1) * limit
   const filter = {}
 
+  // Enforce tenant scoping: agents only see their assigned leads.
+  // Admins can view all leads.
+  if (req.user?.role === 'agent') {
+    filter.agent = req.user.id
+  }
+
   if (status) filter.status = status
   if (interest) filter.interest = interest
   if (source) filter.source = source
@@ -119,7 +137,6 @@ export const getAllLeads = asyncHandler(async (req, res) => {
   const total = await Lead.countDocuments(filter)
 
   const leads = await Lead.find(filter)
-    .populate('buyer', 'firstname lastname email phone')
     .populate('property', 'title address city price')
     .populate('agent', 'firstname lastname email')
     .sort({ createdAt: -1 })
@@ -158,7 +175,7 @@ export const getAgentLeads = asyncHandler(async (req, res) => {
   const total = await Lead.countDocuments(filter)
 
   const leads = await Lead.find(filter)
-    .populate('buyer', 'firstname lastname email phone')
+
     .populate('property', 'title address city price bedrooms bathrooms')
     .sort({ createdAt: -1 })
     .skip(skip)
@@ -183,18 +200,31 @@ export const getBuyerLeads = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, status } = req.query
 
   const skip = (page - 1) * limit
-  const filter = { buyer: req.user.id }
+  
+  // Create filter that matches either by buyer ID or by buyer email
+  const filter = {
+    $or: [
+      { buyer: req.user.id },
+      { buyerEmail: req.user.email }
+    ]
+  }
 
   if (status) filter.status = status
 
   const total = await Lead.countDocuments(filter)
+  console.log('Fetching buyer leads for user:', req.user.id, 'email:', req.user.email, 'Total found:', total)
 
   const leads = await Lead.find(filter)
-    .populate('property', 'title address city price bedrooms bathrooms images')
+    .populate('property', 'title address city price bedrooms bathrooms propertyArea propertyType images')
+    .populate('buyer', 'firstname lastname email phone')
     .populate('agent', 'firstname lastname email phone avatar')
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(Number(limit))
+
+  if (leads.length > 0) {
+    console.log('Sample lead - ID:', leads[0]._id, 'Status:', leads[0].status, 'BuyerID:', leads[0].buyer)
+  }
 
   sendSuccessResponse(
     res,
@@ -206,7 +236,7 @@ export const getBuyerLeads = asyncHandler(async (req, res) => {
         totalLeads: total,
       },
     },
-    'Your leads retrieved successfully'
+    'Buyer leads retrieved successfully'
   )
 })
 
@@ -234,7 +264,6 @@ export const getPropertyLeads = asyncHandler(async (req, res) => {
   const total = await Lead.countDocuments(filter)
 
   const leads = await Lead.find(filter)
-    .populate('buyer', 'firstname lastname email phone')
     .populate('agent', 'firstname lastname email')
     .sort({ createdAt: -1 })
     .skip(skip)
@@ -269,8 +298,13 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
     throw new AppError('Lead not found', 404)
   }
 
-  // Check authorization (agent or admin)
-  if (lead.agent?.toString() !== req.user.id && req.user.role !== 'admin') {
+  // Check authorization (agent who owns the lead, buyer who created it, buyer by email fallback, or admin)
+  const isAgent = lead.agent?.toString() === req.user.id
+  const isBuyer = lead.buyer?.toString() === req.user.id
+  const isBuyerByEmail = !!req.user.email && lead.buyerEmail === req.user.email
+  const isAdmin = req.user.role === 'admin'
+  
+  if (!isAgent && !isBuyer && !isBuyerByEmail && !isAdmin) {
     throw new AppError('You are not authorized to update this lead', 403)
   }
 
@@ -285,9 +319,10 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
 
   await lead.save()
 
-  // Populate to get full data for email
-  await lead.populate('buyer', 'firstname lastname email phone')
-  await lead.populate('property', 'title address city')
+  // Populate to get full data for email and response
+  await lead.populate('property', 'title address city price bedrooms bathrooms')
+  await lead.populate('agent', 'firstname lastname email phone avatar')
+  await lead.populate('notes.agentId', 'firstname lastname')
 
   // Send status update email to buyer (non-blocking)
   try {
@@ -333,6 +368,8 @@ export const addNoteToLead = asyncHandler(async (req, res) => {
   lead.lastContactedAt = new Date()
   await lead.save()
 
+  await lead.populate('property', 'title address city price bedrooms bathrooms')
+  await lead.populate('agent', 'firstname lastname email phone avatar')
   await lead.populate('notes.agentId', 'firstname lastname')
 
   sendSuccessResponse(res, lead, 'Note added successfully')
@@ -343,15 +380,55 @@ export const updateLead = asyncHandler(async (req, res) => {
   const { id } = req.params
   const updateData = req.body
 
+  console.log('\n=== UPDATE LEAD DEBUG ===')
+  console.log('Lead ID:', id)
+  console.log('User ID:', req.user.id)
+  console.log('User Role:', req.user.role)
+  console.log('Update Data:', updateData)
+
   const lead = await Lead.findById(id)
 
   if (!lead) {
     throw new AppError('Lead not found', 404)
   }
 
-  // Check authorization (agent who owns the lead or admin)
-  if (lead.agent?.toString() !== req.user.id && req.user.role !== 'admin') {
+  console.log('Lead found:')
+  console.log('  - Lead.buyer:', lead.buyer)
+  console.log('  - Lead.agent:', lead.agent)
+  console.log('  - Lead.status:', lead.status)
+
+  // Check authorization (agent who owns the lead, buyer who created it, buyer by email fallback, or admin)
+  const isAgent = lead.agent?.toString() === req.user.id
+  const isBuyer = lead.buyer?.toString() === req.user.id
+  const isBuyerByEmail = !!req.user.email && lead.buyerEmail === req.user.email
+  const isAdmin = req.user.role === 'admin'
+  
+  console.log('Authorization:')
+  console.log('  - isAgent:', isAgent, '(lead.agent:', lead.agent?.toString(), 'vs user:', req.user.id, ')')
+  console.log('  - isBuyer:', isBuyer, '(lead.buyer:', lead.buyer?.toString(), 'vs user:', req.user.id, ')')
+  console.log('  - isBuyerByEmail:', isBuyerByEmail, '(lead.buyerEmail:', lead.buyerEmail, 'vs user.email:', req.user.email, ')')
+  console.log('  - isAdmin:', isAdmin)
+  
+  if (!isAgent && !isBuyer && !isBuyerByEmail && !isAdmin) {
+    console.log('UNAUTHORIZED - Throwing 403')
     throw new AppError('You are not authorized to update this lead', 403)
+  }
+  
+  console.log('AUTHORIZED - Proceeding with update')
+  
+  // Buyers can only update status to specific values (not 'new')
+  if ((isBuyer || isBuyerByEmail) && !isAgent && !isAdmin) {
+    const buyerAllowedStatuses = ['interested', 'viewing', 'negotiating']
+    if (updateData.status && !buyerAllowedStatuses.includes(updateData.status)) {
+      throw new AppError('You can only set status to: interested, viewing, or negotiating', 403)
+    }
+    // Only allow buyers to update status field
+    const buyerAllowedFields = ['status']
+    Object.keys(updateData).forEach((key) => {
+      if (!buyerAllowedFields.includes(key)) {
+        delete updateData[key]
+      }
+    })
   }
 
   // Allowed fields to update
@@ -374,9 +451,9 @@ export const updateLead = asyncHandler(async (req, res) => {
   lead.lastContactedAt = new Date()
   await lead.save()
 
-  await lead.populate('buyer', 'firstname lastname email')
-  await lead.populate('property', 'title address')
-  await lead.populate('agent', 'firstname lastname')
+  await lead.populate('property', 'title address city price bedrooms bathrooms')
+  await lead.populate('agent', 'firstname lastname email phone avatar')
+  await lead.populate('notes.agentId', 'firstname lastname')
 
   sendSuccessResponse(res, lead, 'Lead updated successfully')
 })

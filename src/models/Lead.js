@@ -6,7 +6,6 @@ const leadSchema = new mongoose.Schema(
     buyer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
     },
     property: {
       type: mongoose.Schema.Types.ObjectId,
