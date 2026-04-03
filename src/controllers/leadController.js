@@ -3,6 +3,7 @@ import Property from '../models/Property.js'
 import User from '../models/User.js'
 import { asyncHandler, AppError, sendSuccessResponse } from '../utils/errorHandler.js'
 import { sendLeadNotification, sendLeadStatusEmail, sendPropertyInquiryConfirmation } from '../services/emailService.js'
+import { notifyInquiryReceived, notifyLeadStatusUpdated } from '../utils/notificationEvents.js'
 
 // Create a new lead
 export const createLead = asyncHandler(async (req, res) => {
@@ -61,6 +62,18 @@ export const createLead = asyncHandler(async (req, res) => {
   // Populate references
   await lead.populate('property', 'title address city price type')
   await lead.populate('agent', 'firstname lastname email phone')
+
+  // Send in-app notification to agent about new inquiry (non-blocking)
+  try {
+    await notifyInquiryReceived(lead.agent._id, {
+      leadId: lead._id,
+      propertyId: lead.property._id,
+      propertyTitle: lead.property.title,
+      buyerName: lead.buyerName,
+    })
+  } catch (notificationError) {
+    console.error('Error sending in-app notification:', notificationError.message)
+  }
 
   // Send email notifications (non-blocking)
   try {
@@ -324,6 +337,20 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
   await lead.populate('agent', 'firstname lastname email phone avatar')
   await lead.populate('notes.agentId', 'firstname lastname')
 
+  // Send in-app notification to buyer about status update (non-blocking)
+  try {
+    if (lead.buyer) {
+      await notifyLeadStatusUpdated(lead.buyer._id, {
+        leadId: lead._id,
+        propertyId: lead.property._id,
+        propertyTitle: lead.property.title,
+        status: lead.status,
+      })
+    }
+  } catch (notificationError) {
+    console.error('Error sending status update notification:', notificationError.message)
+  }
+
   // Send status update email to buyer (non-blocking)
   try {
     const statusEmailData = {
@@ -378,7 +405,7 @@ export const addNoteToLead = asyncHandler(async (req, res) => {
 // Update lead (full update)
 export const updateLead = asyncHandler(async (req, res) => {
   const { id } = req.params
-  const updateData = req.body
+  const updateData = { ...req.body }
 
   console.log('\n=== UPDATE LEAD DEBUG ===')
   console.log('Lead ID:', id)
@@ -441,6 +468,20 @@ export const updateLead = asyncHandler(async (req, res) => {
     'viewingScheduledDate',
     'isWarmLead',
   ]
+
+  // Normalize empty form values to avoid enum/date/number validation errors
+  if (updateData.preferredTimeline === '') {
+    updateData.preferredTimeline = undefined
+  }
+  if (updateData.nextFollowupDate === '') {
+    updateData.nextFollowupDate = undefined
+  }
+  if (updateData.viewingScheduledDate === '') {
+    updateData.viewingScheduledDate = undefined
+  }
+  if (updateData.budget === '') {
+    updateData.budget = undefined
+  }
 
   Object.keys(updateData).forEach((key) => {
     if (allowedFields.includes(key)) {
