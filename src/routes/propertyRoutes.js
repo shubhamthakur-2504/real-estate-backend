@@ -11,6 +11,7 @@ import {
   getUserFavorites,
   getAgentProperties,
   getMyProperties,
+  getPropertiesCreatedByMe,
   featureProperty,
   getFeaturedProperties,
   searchByNearbyFacilities,
@@ -20,7 +21,7 @@ import {
   reorderPropertyImages,
   removePropertyImage,
 } from '../controllers/propertyController.js'
-import { authMiddleware } from '../middlewares/authMiddleware.js'
+import { authMiddleware, roleMiddleware } from '../middlewares/authMiddleware.js'
 
 const router = express.Router()
 
@@ -33,24 +34,25 @@ router.get('/search-distance', searchByDistance)            // e.g., ?distanceFi
 // Protected specific paths (before /:id)
 router.get('/favorites/my', authMiddleware, getUserFavorites)
 router.get('/agent/my', authMiddleware, getMyProperties)
+router.get('/me/created', authMiddleware, getPropertiesCreatedByMe)
 
 // General routes
 router.get('/', getAllProperties)
-router.post('/', authMiddleware, createProperty)
+router.post('/', authMiddleware, roleMiddleware('agent', 'admin'), createProperty)
 
 // ID-based routes (after specific paths)
 router.get('/:id', getProperty)
-router.put('/:id', authMiddleware, updateProperty)
-router.delete('/:id', authMiddleware, deleteProperty)
+router.put('/:id', authMiddleware, roleMiddleware('agent', 'admin'), updateProperty)
+router.delete('/:id', authMiddleware, roleMiddleware('agent', 'admin'), deleteProperty)
 router.post('/:id/favorite', authMiddleware, addToFavorites)
 router.delete('/:id/favorite', authMiddleware, removeFromFavorites)
-router.post('/:id/feature', authMiddleware, featureProperty)
+router.post('/:id/feature', authMiddleware, roleMiddleware('admin'), featureProperty)
 
 // Image management routes
-router.post('/:propertyId/images/add', authMiddleware, addPropertyImage)
-router.post('/:propertyId/images/featured', authMiddleware, setFeaturedImage)
-router.put('/:propertyId/images/reorder', authMiddleware, reorderPropertyImages)
-router.delete('/:propertyId/images/remove', authMiddleware, removePropertyImage)
+router.post('/:propertyId/images/add', authMiddleware, roleMiddleware('agent', 'admin'), addPropertyImage)
+router.post('/:propertyId/images/featured', authMiddleware, roleMiddleware('agent', 'admin'), setFeaturedImage)
+router.put('/:propertyId/images/reorder', authMiddleware, roleMiddleware('agent', 'admin'), reorderPropertyImages)
+router.delete('/:propertyId/images/remove', authMiddleware, roleMiddleware('agent', 'admin'), removePropertyImage)
 
 // Agent properties with agentId
 router.get('/agent/:agentId', getAgentProperties)
