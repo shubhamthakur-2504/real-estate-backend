@@ -91,19 +91,9 @@ export const createLead = asyncHandler(async (req, res) => {
       interest: lead.interest,
     }
     await sendLeadNotification(lead.agent.email, agentEmailData)
-
-    // Send confirmation email to buyer
-    const propertyData = {
-      title: lead.property.title,
-      address: lead.property.address,
-      city: lead.property.city,
-      price: lead.property.price,
-      type: lead.property.type,
-    }
-    await sendPropertyInquiryConfirmation(buyerEmail, buyerName, propertyData)
   } catch (emailError) {
     // Log error but don't fail the lead creation
-    console.error('Error sending lead notification emails:', emailError.message)
+    console.error('Error sending lead notification email to agent:', emailError.message)
   }
 
   sendSuccessResponse(
