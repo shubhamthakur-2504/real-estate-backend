@@ -12,6 +12,8 @@ import leadRoutes from './routes/leadRoutes.js'
 import wishlistRoutes from './routes/wishlistRoutes.js'
 import notificationRoutes from './routes/notificationRoutes.js'
 import uploadRoutes from './routes/uploadRoutes.js'
+import paymentRoutes from './routes/paymentRoutes.js'
+import bookingRequestRoutes from './routes/bookingRequestRoutes.js'
 
 // Config
 const app = express()
@@ -60,6 +62,8 @@ app.use('/api/leads', leadRoutes)
 app.use('/api/wishlist', wishlistRoutes)
 app.use('/api/notifications', notificationRoutes)
 app.use('/api/uploads', uploadRoutes)
+app.use('/api/payments', paymentRoutes)
+app.use('/api/booking-requests', bookingRequestRoutes)
 // app.use('/api/admin', adminRoutes)
 
 // 404 Handler
