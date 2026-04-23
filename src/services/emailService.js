@@ -344,3 +344,104 @@ export const sendPropertyInquiryConfirmation = async (email, buyerName, property
   `
   return sendEmail(email, '✅ We received your inquiry - ' + propertyData.title, html)
 }
+
+export const sendBookingRequestEmail = async (email, bookingData) => {
+  const bookingLink = `${process.env.FRONTEND_URL}/buyer/booking-requests`
+  const html = `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 700px; margin: 0 auto; background-color: #f9fafb;">
+      <div style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; padding: 40px 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h2 style="margin: 0; font-size: 28px; font-weight: 600;">🏠 Booking Token Request</h2>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 16px;">A booking token request has been created for your property.</p>
+      </div>
+
+      <div style="background-color: white; padding: 40px 20px;">
+        <p style="color: #555; font-size: 16px; line-height: 1.6; margin: 0 0 10px 0;">Hi <strong>${bookingData.buyerName}</strong>,</p>
+        <p style="color: #555; font-size: 16px; line-height: 1.6; margin: 20px 0 30px 0;">
+          Your agent has sent a booking token request for the property below. Please review it and complete payment before it expires.
+        </p>
+
+        <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); padding: 25px; border-radius: 8px; margin: 25px 0; border-left: 5px solid #2563eb;">
+          <h3 style="color: #333; margin: 0 0 15px 0; font-size: 16px;">Booking Details</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px 0; color: #666;"><strong>Property:</strong></td>
+              <td style="padding: 8px 0; color: #333; text-align: right;">${bookingData.propertyTitle}</td>
+            </tr>
+            <tr style="background-color: rgba(255, 255, 255, 0.4);">
+              <td style="padding: 8px 0; color: #666;"><strong>Token Amount:</strong></td>
+              <td style="padding: 8px 0; color: #111827; text-align: right; font-weight: 600;">₹${bookingData.tokenAmount?.toLocaleString('en-IN')}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #666;"><strong>Expires In:</strong></td>
+              <td style="padding: 8px 0; color: #333; text-align: right;">${bookingData.expiresInDays} day(s)</td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${bookingLink}" style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: 600; display: inline-block; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+            Review / Pay Request →
+          </a>
+        </div>
+
+        ${bookingData.notes ? `
+        <div style="background-color: #f0f9ff; border-left: 4px solid #38bdf8; padding: 15px; margin: 25px 0; border-radius: 4px;">
+          <p style="color: #555; font-size: 14px; margin: 0; line-height: 1.6;">
+            <strong>Agent Note:</strong> ${bookingData.notes}
+          </p>
+        </div>` : ''}
+
+        <p style="color: #999; font-size: 12px; border-top: 1px solid #ddd; padding-top: 20px; margin-top: 30px;">
+          This request will remain pending until payment is completed or it expires.
+        </p>
+      </div>
+    </div>
+  `
+  return sendEmail(email, '🏠 Booking Token Request - ' + bookingData.propertyTitle, html)
+}
+
+export const sendBookingPaymentStatusEmail = async (email, bookingData) => {
+  const bookingLink = `${process.env.FRONTEND_URL}/buyer/booking-requests`
+  const statusLabel = {
+    paid: '✅ Payment Received',
+    refunded: '↩️ Booking Refunded',
+    cancelled: '⛔ Booking Cancelled',
+    completed: '🎉 Booking Completed',
+  }[bookingData.status] || 'Booking Update'
+
+  const html = `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 700px; margin: 0 auto; background-color: #f9fafb;">
+      <div style="background: linear-gradient(135deg, #111827 0%, #1f2937 100%); color: white; padding: 40px 20px; text-align: center; border-radius: 12px 12px 0 0;">
+        <h2 style="margin: 0; font-size: 28px; font-weight: 600;">${statusLabel}</h2>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 16px;">${bookingData.propertyTitle}</p>
+      </div>
+
+      <div style="background-color: white; padding: 40px 20px;">
+        <p style="color: #555; font-size: 16px; line-height: 1.6; margin: 0 0 10px 0;">Hi <strong>${bookingData.buyerName}</strong>,</p>
+        <p style="color: #555; font-size: 16px; line-height: 1.6; margin: 20px 0 30px 0;">
+          Your booking token request status has been updated to <strong>${bookingData.status}</strong>.
+        </p>
+
+        <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 25px 0;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px 0; color: #666;"><strong>Property:</strong></td>
+              <td style="padding: 8px 0; color: #333; text-align: right;">${bookingData.propertyTitle}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #666;"><strong>Amount:</strong></td>
+              <td style="padding: 8px 0; color: #333; text-align: right;">₹${bookingData.tokenAmount?.toLocaleString('en-IN')}</td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${bookingLink}" style="background: linear-gradient(135deg, #111827 0%, #1f2937 100%); color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: 600; display: inline-block; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+            View Booking Requests →
+          </a>
+        </div>
+      </div>
+    </div>
+  `
+  return sendEmail(email, `${statusLabel} - ${bookingData.propertyTitle}`, html)
+}
