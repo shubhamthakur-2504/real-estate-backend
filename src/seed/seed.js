@@ -4,14 +4,16 @@ import { connectDB, disconnectDB } from '../config/database.js'
 import User from '../models/User.js'
 import Property from '../models/Property.js'
 import Lead from '../models/Lead.js'
+import BookingRequest from '../models/BookingRequest.js'
+import Payment from '../models/Payment.js'
 import Wishlist from '../models/Wishlist.js'
 import Notification from '../models/Notification.js'
 
 dotenv.config()
 
 const PASSWORD_PLAIN = 'Password@123'
-const DEMO_AGENT_EMAIL = 'your_email@gmail.com' // Change this to your email for demo login access. This agent will have the majority of properties and leads for presentation flows.
-const DEMO_BUYER_EMAIL = 'your_email@gmail.com' // Change this to your email for demo login access. This buyer will have several inquiries and notifications for presentation flows.
+const DEMO_AGENT_EMAIL = 'try.shubham2504@gmail.com'
+const DEMO_BUYER_EMAIL = 'shubham422517@gmail.com'
 
 const firstNames = [
   'Aarav', 'Vivaan', 'Aditya', 'Ishaan', 'Krishna', 'Riya', 'Ananya', 'Meera', 'Aisha', 'Diya',
@@ -192,6 +194,8 @@ const makeImageSet = (seed, propertyType) => {
 const clearDatabase = async () => {
   await Promise.all([
     Notification.deleteMany({}),
+    Payment.deleteMany({}),
+    BookingRequest.deleteMany({}),
     Wishlist.deleteMany({}),
     Lead.deleteMany({}),
     Property.deleteMany({}),
@@ -438,6 +442,143 @@ const createLeads = async ({ buyers, properties, demoAgentId }) => {
   return Lead.insertMany(leads)
 }
 
+const getTokenAmount = (price) => {
+  const onePercent = Math.round(Number(price || 0) * 0.01)
+  return Math.max(1000, Math.min(onePercent || 1000, 50000))
+}
+
+const createBookingFlowSeed = async ({ leads, demoBuyer, demoAgent }) => {
+  const buyerLeads = leads
+    .filter((lead) => lead.buyer?.toString() === demoBuyer._id.toString())
+    .filter((lead) => !['lost', 'converted'].includes(lead.status))
+    .slice(0, 3)
+
+  if (buyerLeads.length === 0) {
+    return { bookingRequests: [], payments: [] }
+  }
+
+  const [pendingLead, paidLead, completedLead] = buyerLeads
+  const bookingRequests = []
+  const notifications = []
+
+  const addBooking = (lead, status, overrides = {}) => {
+    const tokenAmount = overrides.tokenAmount || getTokenAmount(lead.property?.price)
+
+    bookingRequests.push({
+      lead: lead._id,
+      property: lead.property,
+      buyer: lead.buyer,
+      agent: lead.agent || demoAgent._id,
+      createdBy: demoAgent._id,
+      tokenAmount,
+      currency: 'INR',
+      expiresAt: overrides.expiresAt || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      status,
+      notes: overrides.notes || `Seeded ${status} booking request.`,
+      paidAt: overrides.paidAt,
+      completedAt: overrides.completedAt,
+    })
+
+    notifications.push(
+      {
+        user: lead.buyer,
+        type: status === 'pending' ? 'booking_request_created' : status === 'paid' ? 'booking_token_paid' : 'booking_request_completed',
+        title: status === 'pending' ? 'Booking Token Request Received' : status === 'paid' ? 'Booking Token Paid' : 'Booking Completed',
+        message: status === 'pending'
+          ? `A booking token request was created for ${lead.property?.title || 'a property'}`
+          : status === 'paid'
+            ? `Your booking token for ${lead.property?.title || 'a property'} has been received`
+            : `Your booking for ${lead.property?.title || 'a property'} has been completed`,
+        data: {
+          leadId: lead._id,
+          propertyId: lead.property,
+          actionUrl: '/buyer/booking-requests',
+        },
+      },
+      {
+        user: lead.agent || demoAgent._id,
+        type: status === 'pending' ? 'booking_request_created' : status === 'paid' ? 'booking_token_paid' : 'booking_request_completed',
+        title: status === 'pending' ? 'Booking Token Request Sent' : status === 'paid' ? 'Booking Token Paid' : 'Booking Completed',
+        message: status === 'pending'
+          ? `Booking token request created for ${lead.property?.title || 'a property'}`
+          : status === 'paid'
+            ? `Booking token received for ${lead.property?.title || 'a property'}`
+            : `Booking for ${lead.property?.title || 'a property'} has been completed`,
+        data: {
+          leadId: lead._id,
+          propertyId: lead.property,
+          actionUrl: '/agent/booking-requests',
+        },
+      }
+    )
+  }
+
+  addBooking(pendingLead, 'pending')
+  if (paidLead) {
+    addBooking(paidLead, 'paid', { paidAt: new Date() })
+  }
+  if (completedLead) {
+    addBooking(completedLead, 'completed', {
+      paidAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      completedAt: new Date(),
+    })
+  }
+
+  const insertedRequests = await BookingRequest.insertMany(bookingRequests)
+
+  const payments = insertedRequests
+    .filter((request) => ['paid', 'completed'].includes(request.status))
+    .map((request) => ({
+      user: request.buyer,
+      property: request.property,
+      bookingRequest: request._id,
+      amount: request.tokenAmount,
+      currency: 'INR',
+      receipt: `seed-${request.status}-${request._id.toString().slice(-8)}`,
+      status: 'paid',
+      notes: { source: 'seed', bookingFlow: true },
+      razorpayOrderId: `order_seed_${request._id.toString().slice(-8)}`,
+      razorpayPaymentId: `pay_seed_${request._id.toString().slice(-8)}`,
+      razorpaySignature: 'seed_signature',
+      gatewayStatus: 'captured',
+      paidAt: request.paidAt || new Date(),
+    }))
+
+  if (payments.length > 0) {
+    const insertedPayments = await Payment.insertMany(payments)
+    await Promise.all(
+      insertedRequests
+        .filter((request) => ['paid', 'completed'].includes(request.status))
+        .map(async (request) => {
+          const paymentDoc = insertedPayments.find(
+            (payment) => payment.bookingRequest.toString() === request._id.toString()
+          )
+          if (paymentDoc) {
+            request.payment = paymentDoc._id
+            await request.save()
+          }
+        })
+    )
+  }
+
+  await Notification.insertMany(notifications)
+
+  const propertyIdsToUpdate = insertedRequests
+    .filter((request) => ['paid', 'completed'].includes(request.status))
+    .map((request) => ({
+      id: request.property,
+      status: request.status === 'paid' ? 'on_hold' : 'sold',
+    }))
+
+  await Promise.all(
+    propertyIdsToUpdate.map(({ id, status }) =>
+      Property.findByIdAndUpdate(id, { status })
+    )
+  )
+
+  return { bookingRequests: insertedRequests, payments }
+}
+
 const runSeed = async () => {
   await connectDB()
 
@@ -466,6 +607,13 @@ const runSeed = async () => {
     console.log('📈 Seeding leads...')
     const leads = await createLeads({ buyers, properties, demoAgentId: demoAgent._id })
 
+    console.log('🧾 Seeding booking flow data...')
+    const bookingFlow = await createBookingFlowSeed({
+      leads,
+      demoBuyer,
+      demoAgent,
+    })
+
     const demoAgentPropertyCount = properties.filter(
       (property) => property.agent?.toString() === demoAgent._id.toString()
     ).length
@@ -477,6 +625,8 @@ const runSeed = async () => {
     console.log(`   Users: ${users.length}`)
     console.log(`   Properties: ${properties.length}`)
     console.log(`   Leads: ${leads.length}`)
+    console.log(`   Booking Requests: ${bookingFlow.bookingRequests.length}`)
+    console.log(`   Payments: ${bookingFlow.payments.length}`)
     console.log(`   Demo agent (${DEMO_AGENT_EMAIL}) properties: ${demoAgentPropertyCount}`)
     console.log(`   Demo buyer (${DEMO_BUYER_EMAIL}) leads: ${demoBuyerLeadCount}`)
     console.log(`   Default password for all users: ${PASSWORD_PLAIN}`)

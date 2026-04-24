@@ -9,7 +9,19 @@ const notificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ['lead_assigned', 'lead_status_updated', 'inquiry_received', 'wishlist_price_drop', 'message', 'system'],
+      enum: [
+        'lead_assigned',
+        'lead_status_updated',
+        'inquiry_received',
+        'wishlist_price_drop',
+        'message',
+        'system',
+        'booking_request_created',
+        'booking_request_cancelled',
+        'booking_request_refunded',
+        'booking_request_completed',
+        'booking_token_paid',
+      ],
       required: true,
     },
     title: {
