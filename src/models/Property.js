@@ -86,8 +86,23 @@ const propertySchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'inactive', 'sold'],
+      enum: ['active', 'inactive', 'on_hold', 'sold'],
       default: 'active',
+    },
+    isDeleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    deletedAt: Date,
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    statusBeforeDelete: {
+      type: String,
+      enum: ['active', 'inactive', 'on_hold', 'sold'],
+      default: null,
     },
     views: {
       type: Number,
@@ -107,6 +122,7 @@ const propertySchema = new mongoose.Schema(
 
 // Create geospatial index for location-based queries
 propertySchema.index({ location: '2dsphere' })
+propertySchema.index({ status: 1, isDeleted: 1 })
 
 const Property = mongoose.model('Property', propertySchema)
 export default Property

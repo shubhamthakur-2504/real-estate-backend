@@ -1,4 +1,6 @@
 import Property from '../models/Property.js'
+import BookingRequest from '../models/BookingRequest.js'
+import Payment from '../models/Payment.js'
 import { asyncHandler, AppError, sendSuccessResponse } from '../utils/errorHandler.js'
 import { geocodeAddress } from '../utils/geocoding.js'
 import { safeDeleteImage, safeReplaceImage, safeBatchDeleteImages } from '../utils/imageCleanup.js'
@@ -77,7 +79,7 @@ export const getAllProperties = asyncHandler(async (req, res) => {
   const skip = (page - 1) * limit
 
   // Build filter object
-  const filter = { status }
+  const filter = { status, isDeleted: false }
 
   if (city) {
     filter.city = { $regex: city, $options: 'i' } // Case-insensitive search
@@ -120,8 +122,8 @@ export const getAllProperties = asyncHandler(async (req, res) => {
 export const getProperty = asyncHandler(async (req, res) => {
   const { id } = req.params
 
-  const property = await Property.findByIdAndUpdate(
-    id,
+  const property = await Property.findOneAndUpdate(
+    { _id: id, isDeleted: false },
     { $inc: { views: 1 } }, // Increment views
     { new: true }
   )
@@ -145,7 +147,7 @@ export const updateProperty = asyncHandler(async (req, res) => {
   const { id } = req.params
   const updateData = req.body
 
-  const property = await Property.findById(id)
+  const property = await Property.findOne({ _id: id, isDeleted: false })
 
   if (!property) {
     throw new AppError('Property not found', 404)
@@ -214,44 +216,79 @@ export const deleteProperty = asyncHandler(async (req, res) => {
     throw new AppError('Property not found', 404)
   }
 
+  if (property.isDeleted) {
+    throw new AppError('Property is already deleted', 400)
+  }
+
   // Check authorization (owner or admin only)
   if (property.owner.toString() !== req.user.id && req.user.role !== 'admin') {
     throw new AppError('You are not authorized to delete this property', 403)
   }
 
-  // Collect all image public IDs for cleanup
-  const imagesToDelete = []
-  
-  // Add featured image
-  if (property.featuredImage?.publicId) {
-    imagesToDelete.push(property.featuredImage.publicId)
-  }
-  
-  // Add all gallery images
-  if (Array.isArray(property.images)) {
-    property.images.forEach((img) => {
-      if (img.publicId) {
-        imagesToDelete.push(img.publicId)
-      }
-    })
+  // Guard rail: do not allow deleting financially linked properties
+  if (property.status === 'on_hold' || property.status === 'sold') {
+    throw new AppError('Cannot delete property with status on_hold or sold', 409)
   }
 
-  // Delete property from database
-  await Property.findByIdAndDelete(id)
+  const hasBlockingBooking = await BookingRequest.findOne({
+    property: property._id,
+    status: { $in: ['pending', 'paid', 'completed'] },
+  }).select('_id')
 
-  // Delete all associated images from Cloudinary asynchronously (non-blocking)
-  if (imagesToDelete.length > 0) {
-    safeBatchDeleteImages(
-      imagesToDelete.map((publicId) => ({ publicId })),
-      'deleteProperty'
-    ).catch((err) => console.error('Background batch image deletion error:', err))
+  if (hasBlockingBooking) {
+    throw new AppError('Cannot delete property with active/paid/completed booking history', 409)
   }
+
+  const hasBlockingPayment = await Payment.findOne({
+    property: property._id,
+    status: { $in: ['created', 'pending', 'paid'] },
+  }).select('_id')
+
+  if (hasBlockingPayment) {
+    throw new AppError('Cannot delete property with active/paid payment history', 409)
+  }
+
+  // Soft delete for fraud-safe audit trail
+  property.isDeleted = true
+  property.deletedAt = new Date()
+  property.deletedBy = req.user.id
+  property.statusBeforeDelete = property.status
+  property.status = 'inactive'
+  await property.save()
 
   sendSuccessResponse(
     res,
     {},
-    'Property deleted successfully'
+    'Property archived successfully'
   )
+})
+
+// Restore soft-deleted property (admin only)
+export const restoreProperty = asyncHandler(async (req, res) => {
+  const { id } = req.params
+
+  if (req.user.role !== 'admin') {
+    throw new AppError('Only admin can restore deleted properties', 403)
+  }
+
+  const property = await Property.findById(id)
+
+  if (!property) {
+    throw new AppError('Property not found', 404)
+  }
+
+  if (!property.isDeleted) {
+    throw new AppError('Property is not deleted', 400)
+  }
+
+  property.isDeleted = false
+  property.deletedAt = null
+  property.deletedBy = null
+  property.status = property.statusBeforeDelete || 'inactive'
+  property.statusBeforeDelete = null
+  await property.save()
+
+  sendSuccessResponse(res, property, 'Property restored successfully')
 })
 
 // Search properties by location (geospatial query)
@@ -263,6 +300,7 @@ export const searchPropertiesByLocation = asyncHandler(async (req, res) => {
   }
 
   const properties = await Property.find({
+    isDeleted: false,
     location: {
       $near: {
         $geometry: {
@@ -290,7 +328,7 @@ export const addToFavorites = asyncHandler(async (req, res) => {
   const { id } = req.params
 
   const property = await Property.findByIdAndUpdate(
-    id,
+    { _id: id, isDeleted: false },
     { $addToSet: { favorites: req.user.id } }, // $addToSet prevents duplicates
     { new: true }
   )
@@ -311,7 +349,7 @@ export const removeFromFavorites = asyncHandler(async (req, res) => {
   const { id } = req.params
 
   const property = await Property.findByIdAndUpdate(
-    id,
+    { _id: id, isDeleted: false },
     { $pull: { favorites: req.user.id } },
     { new: true }
   )
@@ -333,9 +371,9 @@ export const getUserFavorites = asyncHandler(async (req, res) => {
 
   const skip = (page - 1) * limit
 
-  const total = await Property.countDocuments({ favorites: req.user.id })
+  const total = await Property.countDocuments({ favorites: req.user.id, isDeleted: false })
 
-  const properties = await Property.find({ favorites: req.user.id })
+  const properties = await Property.find({ favorites: req.user.id, isDeleted: false })
     .populate('owner', 'firstname lastname email phone avatar')
     .populate('agent', 'firstname lastname email phone avatar')
     .sort({ createdAt: -1 })
@@ -369,9 +407,9 @@ export const getAgentProperties = asyncHandler(async (req, res) => {
 
   const skip = (page - 1) * limit
 
-  const total = await Property.countDocuments({ agent: agentId })
+  const total = await Property.countDocuments({ agent: agentId, isDeleted: false })
 
-  const properties = await Property.find({ agent: agentId })
+  const properties = await Property.find({ agent: agentId, isDeleted: false })
     .populate('owner', 'firstname lastname email phone avatar')
     .sort({ createdAt: -1 })
     .skip(skip)
@@ -401,9 +439,9 @@ export const getMyProperties = asyncHandler(async (req, res) => {
 
   const skip = (page - 1) * limit
 
-  const total = await Property.countDocuments({ agent: req.user.id })
+  const total = await Property.countDocuments({ agent: req.user.id, isDeleted: false })
 
-  const properties = await Property.find({ agent: req.user.id })
+  const properties = await Property.find({ agent: req.user.id, isDeleted: false })
     .populate('owner', 'firstname lastname email phone avatar')
     .sort({ createdAt: -1 })
     .skip(skip)
@@ -434,8 +472,8 @@ export const getPropertiesCreatedByMe = asyncHandler(async (req, res) => {
   // For agents: properties where agent === user.id
   // For admins: properties where owner === user.id (created by this admin)
   const filter = req.user.role === 'agent'
-    ? { agent: req.user.id }
-    : { owner: req.user.id }
+    ? { agent: req.user.id, isDeleted: false }
+    : { owner: req.user.id, isDeleted: false }
 
   const properties = await Property.find(filter)
     .select('_id title city propertyType price')
@@ -460,7 +498,7 @@ export const featureProperty = asyncHandler(async (req, res) => {
   }
 
   const property = await Property.findByIdAndUpdate(
-    id,
+    { _id: id, isDeleted: false },
     { featured: true },
     { new: true }
   )
@@ -480,7 +518,7 @@ export const featureProperty = asyncHandler(async (req, res) => {
 export const getFeaturedProperties = asyncHandler(async (req, res) => {
   const { limit = 6 } = req.query
 
-  const properties = await Property.find({ featured: true, status: 'active' })
+  const properties = await Property.find({ featured: true, status: 'active', isDeleted: false })
     .populate('owner', 'firstname lastname email phone avatar')
     .populate('agent', 'firstname lastname email phone avatar')
     .sort({ createdAt: -1 })
@@ -509,6 +547,7 @@ export const searchByNearbyFacilities = asyncHandler(async (req, res) => {
   // Find properties that have this facility type within maxDistance
   const total = await Property.countDocuments({
     status: 'active',
+    isDeleted: false,
     nearbyFacilities: {
       $elemMatch: {
         type: facilityType,
@@ -519,6 +558,7 @@ export const searchByNearbyFacilities = asyncHandler(async (req, res) => {
 
   const properties = await Property.find({
     status: 'active',
+    isDeleted: false,
     nearbyFacilities: {
       $elemMatch: {
         type: facilityType,
@@ -573,6 +613,7 @@ export const searchByDistance = asyncHandler(async (req, res) => {
   // Build filter object
   const filter = {
     status: 'active',
+    isDeleted: false,
     [distanceField]: { $lte: Number(maxDistance), $exists: true, $ne: null },
   }
 
@@ -608,7 +649,7 @@ export const addPropertyImage = asyncHandler(async (req, res) => {
     throw new AppError('Please provide image url and publicId', 400)
   }
 
-  const property = await Property.findById(propertyId)
+  const property = await Property.findOne({ _id: propertyId, isDeleted: false })
   if (!property) {
     throw new AppError('Property not found', 404)
   }
@@ -639,7 +680,7 @@ export const setFeaturedImage = asyncHandler(async (req, res) => {
     throw new AppError('Please provide image url and publicId', 400)
   }
 
-  const property = await Property.findById(propertyId)
+  const property = await Property.findOne({ _id: propertyId, isDeleted: false })
   if (!property) {
     throw new AppError('Property not found', 404)
   }
@@ -679,7 +720,7 @@ export const reorderPropertyImages = asyncHandler(async (req, res) => {
     throw new AppError('Please provide images array with order', 400)
   }
 
-  const property = await Property.findById(propertyId)
+  const property = await Property.findOne({ _id: propertyId, isDeleted: false })
   if (!property) {
     throw new AppError('Property not found', 404)
   }
@@ -706,7 +747,7 @@ export const removePropertyImage = asyncHandler(async (req, res) => {
     throw new AppError('Please provide publicId', 400)
   }
 
-  const property = await Property.findById(propertyId)
+  const property = await Property.findOne({ _id: propertyId, isDeleted: false })
   if (!property) {
     throw new AppError('Property not found', 404)
   }

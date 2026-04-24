@@ -5,6 +5,7 @@ import {
   getProperty,
   updateProperty,
   deleteProperty,
+  restoreProperty,
   searchPropertiesByLocation,
   addToFavorites,
   removeFromFavorites,
@@ -44,6 +45,7 @@ router.post('/', authMiddleware, roleMiddleware('agent', 'admin'), createPropert
 router.get('/:id', getProperty)
 router.put('/:id', authMiddleware, roleMiddleware('agent', 'admin'), updateProperty)
 router.delete('/:id', authMiddleware, roleMiddleware('agent', 'admin'), deleteProperty)
+router.patch('/:id/restore', authMiddleware, roleMiddleware('admin'), restoreProperty)
 router.post('/:id/favorite', authMiddleware, addToFavorites)
 router.delete('/:id/favorite', authMiddleware, removeFromFavorites)
 router.post('/:id/feature', authMiddleware, roleMiddleware('admin'), featureProperty)
